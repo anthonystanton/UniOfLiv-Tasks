@@ -1,0 +1,289 @@
+---
+title: "Coursework"
+output: html_document
+---
+
+
+```{r}
+library(httr)
+library(rvest)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(lubridate)
+library(stringr)
+library(viridis)
+library(leaflet)
+library(htmltools)
+library(tibble)
+library(devtools)
+library(jsonlite)
+```
+
+Loading Files    
+
+
+```{r}
+options(stringsAsFactors = FALSE)
+
+LiverpoolPostcodes = read.csv("Lpost.csv", header = TRUE)
+
+LiverpoolPostcodesTrimmed <- LiverpoolPostcodes %>% dplyr::select(postcode = Postcode,lat = Latitude, long = Longitude, dist = District, ward = Ward)
+
+LivPostcodesOnly <- LiverpoolPostcodesTrimmed[- grep("Liverpool", LiverpoolPostcodesTrimmed$dist, invert = TRUE),]
+
+LST <- sample_n(LivPostcodesOnly, 30)
+```
+
+```{r}
+crimeMonths <- str_sub(seq(ymd('2017-12-01'), ymd('2018-12-01'),
+                           by = 'month'),
+                       start = 1, end = 7)
+```
+
+```{r}
+crimeData <- function(lat, long, date, ward) {
+  
+  Sys.sleep(0.1)
+  
+  actualURL <- "https://data.police.uk/api/crimes-street/all-crime"
+  policeURL <- paste0(actualURL, "?", "lat=", lat, "&lng=", long, "&date=", date)  
+  policeData <- GET(policeURL)
+  
+  
+  jsonPoliceData <- content(policeData, "text")
+  overallPoliceCrimeData <- fromJSON(jsonPoliceData, flatten = TRUE) %>% 
+    mutate(location = ward)
+  
+  return(overallPoliceCrimeData)
+}
+```
+ 
+
+```{r}
+finalCrimeData<-data.frame()
+for(i in 1:length(crimeMonths)){
+ 
+  policeDataFinalList <- pmap(list(lat = LST$lat,
+                              long = LST$long,
+                              ward = LST$ward,
+                              date = crimeMonths[i]),
+                              crimeData)
+  
+  
+  preFinalCrimeData <- bind_rows(policeDataFinalList) 
+  
+  finalCrimeData <- bind_rows(finalCrimeData, preFinalCrimeData)
+  
+}
+```
+```{r}
+finalCrimeData <- finalCrimeData %>% 
+    left_join(LST, by = c("location" = "ward")) %>%
+    rename(date = month,
+         search_lat = lat,
+         search_long = long)
+```
+
+```{r}
+head(finalCrimeData)
+```
+
+
+```{r}
+finalCrimeData2 <- finalCrimeData
+finalCrimeData3 <- finalCrimeData
+table(finalCrimeData3$location, finalCrimeData3$date)
+```
+
+
+
+```{r}
+crimeGrid <- finalCrimeData %>%
+  unique() %>% 
+  group_by(location, date) %>% 
+  summarise(numberOfCrimes = n())
+```
+
+
+```{r}
+
+ggplot(crimeGrid,aes(x=date,y=location, fill=numberOfCrimes))+
+  
+  geom_tile(colour="gray",size=0.5)+
+  labs(x="",y="")+
+  
+  scale_y_discrete(expand=c(0,0))+
+  
+  scale_x_discrete(expand=c(0,0), 
+                   breaks=c("2018-01","2018-04", "2018-07", "2018-10","2018-12"))+
+  scale_fill_viridis(option = "B", name = "Number of crimes") +
+  ggtitle("Number of crimes in Liverpool district's") +
+  coord_fixed()+
+  
+  theme_grey(base_size=9)+
+  
+  theme(
+    axis.text.x = element_text(),
+    axis.text=element_text(face="bold"),
+    axis.ticks=element_line(size=1),
+    plot.background=element_blank(),
+    panel.border=element_blank()
+  ) 
+```
+
+```{r}
+categoryCrimeGrid <- finalCrimeData %>% 
+  group_by(location, category) %>% 
+  summarise(numberOfCrimes2 = n()) 
+```
+
+```{r}
+ggplot(categoryCrimeGrid,aes(x=category,y=location, fill=numberOfCrimes2))+
+  geom_tile(colour="white",size=0.25)+
+  labs(x="",y="")+
+  scale_y_discrete(expand=c(0,0))+
+  scale_fill_viridis(option = "B", name = "Number of crimes") +
+  coord_fixed()+
+  theme_grey(base_size=8)+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text=element_text(face="bold"),
+    axis.ticks=element_line(size=0.4),
+    plot.background=element_blank(),
+    panel.border=element_blank()
+  ) #+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+finalCrimeData$location.latitude <- as.numeric(finalCrimeData$location.latitude)
+finalCrimeData$location.longitude <- as.numeric(finalCrimeData$location.longitude)
+```
+
+```{r}
+length(finalCrimeData$location)
+```
+
+
+```{r}
+augustData <- finalCrimeData %>%
+  filter(date == "2018-08") %>% 
+  sample_frac(.1)
+
+firstDecemberData <- finalCrimeData %>%
+  filter(date == "2017-12") %>% 
+  sample_frac(.1)
+
+secondDecemberData <- finalCrimeData %>%
+  filter(date == "2018-12") %>% 
+  sample_frac(.1)
+
+```
+
+```{r}
+head(firstDecemberData)
+head(secondDecemberData)
+head(augustData)
+```
+
+
+
+
+```{r}
+color_scheme <- viridis::cividis(n_distinct(firstDecemberData$category))
+pal = colorFactor(color_scheme, firstDecemberData$category)
+
+firstDecemberData %>% 
+  leaflet() %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addCircleMarkers(~as.numeric(location.longitude),
+                   ~as.numeric(location.latitude),
+                   fillColor = ~pal(category),
+                   stroke = FALSE, fillOpacity = 0.8,
+                   clusterOptions = markerClusterOptions(), # adds summary circles
+                   popup = ~as.character(category)
+  )
+```
+
+
+
+
+
+```{r}
+color_scheme <- viridis::cividis(n_distinct(augustData$category))
+pal = colorFactor(color_scheme, augustData$category)
+
+augustData %>% 
+  leaflet() %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addCircleMarkers(~as.numeric(location.longitude),
+                   ~as.numeric(location.latitude),
+                   fillColor = ~pal(category),
+                   stroke = FALSE, fillOpacity = 0.8,
+                   clusterOptions = markerClusterOptions(), # adds summary circles
+                   popup = ~as.character(category)
+  )
+```
+
+
+```{r}
+color_scheme <- viridis::cividis(n_distinct(secondDecemberData$category))
+pal = colorFactor(color_scheme, secondDecemberData$category)
+
+secondDecemberData %>% 
+  leaflet() %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addCircleMarkers(~as.numeric(location.longitude),
+                   ~as.numeric(location.latitude),
+                   fillColor = ~pal(category),
+                   stroke = FALSE, fillOpacity = 0.8,
+                   clusterOptions = markerClusterOptions(), # adds summary circles
+                   popup = ~as.character(category)
+  )
+```
+
+
+
+
+clusteredMap <- leaflet(data = firstDecemberData)
+clusteredMap <- addTiles(clusteredMap)
+clusteredMap <- addMarkers(clusteredMap,~location.longitude,~location.latitude,clusterOptions = markerClusterOptions(),popup = ~category)
+clusteredMap
+
+clusteredMap2 <- leaflet(data = secondDecemberData)
+clusteredMap2 <- addTiles(clusteredMap)
+clusteredMap2 <- addMarkers(clusteredMap,~location.longitude,~location.latitude,clusterOptions = markerClusterOptions(),popup = ~category)
+clusteredMap2
+
+clusteredMap3 <- leaflet(data = augustData)
+clusteredMap3 <- addTiles(clusteredMap)
+clusteredMap3 <- addMarkers(clusteredMap,~location.longitude,~location.latitude,clusterOptions = markerClusterOptions(),popup = ~category)
+
+
+
+
+
